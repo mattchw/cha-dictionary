@@ -4,68 +4,59 @@ A small Next.js (App Router, TypeScript) dictionary app. Look up an English word
 and get its definition, an example, pronunciation, and a Hong Kong written
 Traditional Chinese translation. Built to deploy on Vercel.
 
-- English definitions, examples, phonetics, and audio come from
-  [dictionaryapi.dev](https://dictionaryapi.dev) — fetched **server-side**, so no
-  CORS issues and no keys in the browser.
-- Traditional Chinese is produced by a pluggable translator (Claude or DeepL),
-  targeting 香港繁體.
+- English definitions, examples, and phonetics come from
+  [Free Dictionary API](https://freedictionaryapi.com) (Wiktionary data), with
+  dictionaryapi.dev as a fallback for audio when available.
+- Traditional Chinese glosses come from [CC-CEDICT](https://cc-cedict.org/) — no
+  API key required. Optional Claude or DeepL fallback for long definitions.
 - Two-phase UX: English paints immediately, the Chinese fills in behind it.
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in your key
-npm run dev                  # http://localhost:3000
+npm run download-words   # word list, frequency data, CC-CEDICT (~15 MB total)
+npm run dev              # http://localhost:3000
 ```
+
+Optional: `cp .env.example .env.local` and set `TRANSLATOR_FALLBACK=claude` if you
+want AI translation for full definition sentences.
 
 ## Environment variables
 
-| Variable            | Required            | Notes                                                        |
-| ------------------- | ------------------- | ------------------------------------------------------------ |
-| `TRANSLATOR`        | no (default claude) | `claude` or `deepl`                                          |
-| `ANTHROPIC_API_KEY` | if using claude     | from the Anthropic console                                   |
-| `ANTHROPIC_MODEL`   | no                  | defaults to a Haiku model; confirm current names in the docs |
-| `DEEPL_API_KEY`     | if using deepl      | DeepL API Free works; target language is `ZH-HANT`           |
+| Variable               | Required | Notes                                                       |
+| ---------------------- | -------- | ----------------------------------------------------------- |
+| `TRANSLATOR_FALLBACK`  | no       | `claude` or `deepl` — fills gaps CC-CEDICT cannot cover     |
+| `ANTHROPIC_API_KEY`    | if claude fallback | from the Anthropic console                    |
+| `ANTHROPIC_MODEL`      | no       | defaults to a Haiku model                                   |
+| `DEEPL_API_KEY`        | if deepl fallback  | DeepL API Free; target language is `ZH-HANT`    |
 
 ## Deploy to Vercel
 
-1. Push this folder to a GitHub repo.
+1. Push this folder to a GitHub repo (include `data/cedict.txt` or rely on
+   `prebuild` to download it).
 2. In Vercel, **Add New → Project** and import the repo (it auto-detects Next.js).
-3. Under **Settings → Environment Variables**, add the variables above.
+3. Optionally add `TRANSLATOR_FALLBACK` env vars under **Settings → Environment Variables**.
 4. Deploy. Your app is live at `https://<project>.vercel.app`.
 
-Or from the CLI: `npm i -g vercel && vercel` (add env vars with `vercel env add`).
+Or from the CLI: `npm i -g vercel && vercel`.
 
 ## How it fits together
 
 ```
-app/page.tsx            UI (client): calls the two API routes, renders both phases
-app/api/entry           GET ?word=  -> English entry (fast)
-app/api/translate       GET ?word=  -> English + 香港繁體 merged
-lib/dictionary.ts       fetch + shape dictionaryapi.dev; collect/apply helpers
-lib/translate.ts        Translator interface + Claude and DeepL implementations
-lib/cache.ts            in-memory cache (swap for Vercel KV to make it shared)
+app/page.tsx            UI (client): autocomplete + two-phase lookup
+app/api/entry           GET ?word=  -> English entry
+app/api/translate       POST {entry} -> English + 香港繁體 merged
+app/api/suggest         GET ?q=     -> autocomplete suggestions
+lib/dictionary.ts       fetch + shape Wiktionary entries
+lib/cedict.ts           CC-CEDICT reverse index + translation
+lib/translate.ts        optional AI fallback (Claude / DeepL)
+lib/wordlist.ts         prefix search over local word list
+lib/cache.ts            in-memory cache
+data/cedict.txt         CC-CEDICT (downloaded by npm run download-words)
 ```
-
-## Upgrade paths
-
-- **Persistent, shared cache.** The bundled cache is in-memory, so it only helps
-  within a warm serverless instance. Swap `lib/cache.ts` for
-  [Vercel KV](https://vercel.com/docs/storage/vercel-kv) or Upstash Redis using
-  the same `cacheGet` / `cacheSet` shape, and repeat lookups become instant for
-  every user.
-- **Own the data (fastest, offline-capable).** To stop calling APIs entirely,
-  build a local dictionary from the freely downloadable
-  [Wiktextract / kaikki.org](https://kaikki.org/dictionary/rawdata.html) dumps
-  plus [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict) for the
-  Chinese side. A full bundle is too large for a Vercel function, so host it in a
-  serverless-friendly database such as [Turso](https://turso.tech) (hosted
-  SQLite/libSQL) or Vercel Postgres, and read from that instead of dictionaryapi.dev.
 
 ## Note on data & licensing
 
-dictionaryapi.dev's underlying data is largely derived from Google/Wiktionary
-sources; it's great for personal use, but if this becomes a commercial product,
-move to clearly licensed sources (Wiktionary is CC BY-SA — attribution +
-share-alike — and CC-CEDICT is also CC BY-SA). Attribute accordingly.
+English data is from Wiktionary (CC BY-SA). Chinese glosses are from CC-CEDICT
+(CC BY-SA 4.0). Attribute accordingly if you ship this publicly.

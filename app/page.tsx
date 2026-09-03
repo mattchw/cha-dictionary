@@ -1,11 +1,22 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Search, Volume2, Loader2 } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Search, Volume2, Loader2, X } from "lucide-react";
 import type { DictEntry } from "@/lib/types";
 
 const SUGGESTIONS = ["serendipity", "resilient", "nostalgia", "home"];
 type Status = "idle" | "loading" | "done" | "notfound" | "error";
+
+function highlightPrefix(word: string, prefix: string) {
+  const n = prefix.length;
+  if (n === 0) return <>{word}</>;
+  return (
+    <>
+      <span className="dc-suggest-match">{word.slice(0, n)}</span>
+      <span className="dc-suggest-rest">{word.slice(n)}</span>
+    </>
+  );
+}
 
 export default function Home() {
   const [input, setInput] = useState("");
@@ -13,8 +24,50 @@ export default function Home() {
   const [status, setStatus] = useState<Status>("idle");
   const [translating, setTranslating] = useState(false);
   const [zhFailed, setZhFailed] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const reqRef = useRef(0);
+  const suggestRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const q = input.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      setSuggestOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+
+    const id = ++suggestRef.current;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/suggest?q=${encodeURIComponent(q)}&limit=8`
+        );
+        if (suggestRef.current !== id) return;
+        if (!res.ok) {
+          setSuggestions([]);
+          setSuggestOpen(false);
+          return;
+        }
+        const data = (await res.json()) as { suggestions: string[] };
+        if (suggestRef.current !== id) return;
+        setSuggestions(data.suggestions);
+        setSuggestOpen(data.suggestions.length > 0);
+        setActiveIndex(-1);
+      } catch {
+        if (suggestRef.current === id) {
+          setSuggestions([]);
+          setSuggestOpen(false);
+        }
+      }
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [input]);
 
   async function loadTranslation(eng: DictEntry, id: number) {
     setTranslating(true);
@@ -44,6 +97,9 @@ export default function Home() {
     const id = ++reqRef.current;
 
     setInput(word);
+    setSuggestOpen(false);
+    setSuggestions([]);
+    setActiveIndex(-1);
     setZhFailed(false);
     setEntry(null);
     setTranslating(false);
@@ -60,10 +116,37 @@ export default function Home() {
       setEntry(eng);
       setStatus("done");
 
-      // Fire-and-forget: translation never blocks the English response.
       void loadTranslation(eng, id);
     } catch {
       if (reqRef.current === id) setStatus("error");
+    }
+  }
+
+  function selectSuggestion(word: string) {
+    setSuggestOpen(false);
+    setSuggestions([]);
+    lookup(word);
+  }
+
+  function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!suggestOpen || suggestions.length === 0) {
+      if (e.key === "Enter") lookup();
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
+    } else if (e.key === "Escape") {
+      setSuggestOpen(false);
+      setActiveIndex(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIndex >= 0) selectSuggestion(suggestions[activeIndex]);
+      else lookup();
     }
   }
 
@@ -86,6 +169,8 @@ export default function Home() {
     window.speechSynthesis.speak(u);
   }
 
+  const prefix = input.trim().toLowerCase();
+
   return (
     <div className="dc-wrap">
       <header className="dc-head">
@@ -97,17 +182,64 @@ export default function Home() {
       </header>
 
       <div className="dc-searchrow">
-        <Search className="dc-searchicon" size={20} strokeWidth={2} />
-        <input
-          className="dc-input"
-          value={input}
-          placeholder="Look up a word…"
-          spellCheck={false}
-          autoFocus
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && lookup()}
-        />
-        <button className="dc-go" onClick={() => lookup()}>Look up</button>
+        <div className={`dc-searchbox${suggestOpen ? " is-open" : ""}`}>
+          <Search className="dc-searchicon" size={20} strokeWidth={2} aria-hidden="true" />
+          <input
+            ref={inputRef}
+            className="dc-input"
+            value={input}
+            placeholder="Look up a word…"
+            spellCheck={false}
+            autoFocus
+            autoComplete="off"
+            role="combobox"
+            aria-expanded={suggestOpen}
+            aria-controls="word-suggestions"
+            aria-autocomplete="list"
+            aria-activedescendant={
+              activeIndex >= 0 ? `suggestion-${activeIndex}` : undefined
+            }
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onInputKeyDown}
+            onFocus={() => suggestions.length > 0 && setSuggestOpen(true)}
+            onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
+          />
+          {input && (
+            <button
+              type="button"
+              className="dc-clear"
+              onClick={() => {
+                setInput("");
+                setSuggestOpen(false);
+                setSuggestions([]);
+                inputRef.current?.focus();
+              }}
+              aria-label="Clear search"
+            >
+              <X size={16} strokeWidth={2.25} />
+            </button>
+          )}
+          <button type="button" className="dc-go" onClick={() => lookup()}>
+            Look up
+          </button>
+          {suggestOpen && suggestions.length > 0 && (
+            <ul className="dc-suggest" id="word-suggestions" role="listbox">
+              {suggestions.map((word, i) => (
+                <li key={word} role="option" aria-selected={i === activeIndex}>
+                  <button
+                    type="button"
+                    id={`suggestion-${i}`}
+                    className={`dc-suggest-item${i === activeIndex ? " is-active" : ""}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => selectSuggestion(word)}
+                  >
+                    {highlightPrefix(word, prefix)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       {status === "idle" && (
@@ -194,7 +326,7 @@ export default function Home() {
       )}
 
       <footer className="dc-foot">
-        English &amp; audio from dictionaryapi.dev · Chinese translated to 香港繁體
+        English definitions from Wiktionary · Chinese glosses from CC-CEDICT
       </footer>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { DictEntry } from "./types";
 
 const CAP_DEFS_PER_MEANING = 3;
+const FETCH_TIMEOUT_MS = 10_000;
 
 export class WordNotFoundError extends Error {}
 
@@ -9,13 +10,70 @@ function normalizeAudio(url: string | undefined | null): string | null {
   return url.startsWith("//") ? "https:" + url : url;
 }
 
-// Fetch an English entry from dictionaryapi.dev and reshape it into our tidy,
-// capped DictEntry. Runs server-side, so no CORS issues.
-export async function fetchEnglishEntry(word: string): Promise<DictEntry> {
-  const res = await fetch(
-    `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.trim())}`,
-    // Next.js data cache: reuse the upstream response for a day across requests.
-    { next: { revalidate: 60 * 60 * 24 } }
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+}
+
+// Primary: freedictionaryapi.com (Wiktionary data, fast and reliable).
+async function fetchFromFreeDictionary(word: string): Promise<DictEntry> {
+  const res = await fetchWithTimeout(
+    `https://freedictionaryapi.com/api/v1/entries/en/${encodeURIComponent(word.trim())}`
+  );
+
+  if (!res.ok) throw new Error(`freedictionaryapi error ${res.status}`);
+
+  const data = (await res.json()) as {
+    word?: string;
+    entries?: {
+      partOfSpeech: string;
+      pronunciations?: { text?: string }[];
+      senses?: { definition: string; examples?: string[] }[];
+    }[];
+  };
+
+  if (!data.entries?.length) throw new WordNotFoundError(word);
+
+  let phonetic: string | null = null;
+  for (const entry of data.entries) {
+    const text = entry.pronunciations?.[0]?.text;
+    if (text) {
+      phonetic = text;
+      break;
+    }
+  }
+
+  const meanings: DictEntry["meanings"] = data.entries
+    .map((entry) => ({
+      partOfSpeech: entry.partOfSpeech,
+      definitions: (entry.senses || [])
+        .slice(0, CAP_DEFS_PER_MEANING)
+        .map((sense) => ({
+          en: sense.definition,
+          example: sense.examples?.[0] ?? null,
+        })),
+    }))
+    .filter((m) => m.definitions.length > 0);
+
+  if (!meanings.length) throw new WordNotFoundError(word);
+
+  return {
+    word: data.word || word,
+    phonetic,
+    audio: null,
+    meanings,
+  };
+}
+
+// Fallback: dictionaryapi.dev (includes audio when available, but often slow/down).
+async function fetchFromDictionaryApiDev(word: string): Promise<DictEntry> {
+  const res = await fetchWithTimeout(
+    `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.trim())}`
   );
 
   if (res.status === 404) throw new WordNotFoundError(word);
@@ -26,7 +84,6 @@ export async function fetchEnglishEntry(word: string): Promise<DictEntry> {
 
   const first = data[0];
 
-  // Audio can live on any entry's phonetics array.
   let audio: string | null = null;
   for (const e of data) {
     const hit = (e.phonetics || []).find((p: any) => p.audio);
@@ -52,6 +109,17 @@ export async function fetchEnglishEntry(word: string): Promise<DictEntry> {
   };
 }
 
+// Fetch an English entry and reshape it into our tidy, capped DictEntry.
+export async function fetchEnglishEntry(word: string): Promise<DictEntry> {
+  try {
+    return await fetchFromFreeDictionary(word);
+  } catch (err) {
+    if (err instanceof WordNotFoundError) throw err;
+  }
+
+  return await fetchFromDictionaryApiDev(word);
+}
+
 // Flatten every string that needs translating, in a fixed order.
 export function collectStrings(entry: DictEntry): string[] {
   const out = [entry.word];
@@ -65,7 +133,10 @@ export function collectStrings(entry: DictEntry): string[] {
 }
 
 // Re-walk in the same order and attach the Traditional Chinese strings.
-export function applyTranslations(entry: DictEntry, zh: string[]): DictEntry {
+export function applyTranslations(
+  entry: DictEntry,
+  zh: (string | null)[]
+): DictEntry {
   let i = 0;
   const wordZh = zh[i++] ?? null;
   const meanings = entry.meanings.map((m) => ({

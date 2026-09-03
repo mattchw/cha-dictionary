@@ -1,6 +1,6 @@
-// Pluggable translation. Swap providers via the TRANSLATOR env var without
-// touching anything else. Both implementations target Hong Kong written
-// Traditional Chinese (香港繁體).
+// Pluggable translation for strings CC-CEDICT cannot cover.
+// Default Chinese source is CC-CEDICT (lib/cedict.ts). Set TRANSLATOR_FALLBACK
+// to claude or deepl to translate longer definitions and examples.
 
 export interface Translator {
   translate(strings: string[]): Promise<string[]>;
@@ -52,7 +52,7 @@ class DeepLTranslator implements Translator {
     const params = new URLSearchParams();
     for (const t of strings) params.append("text", t);
     params.append("source_lang", "EN");
-    params.append("target_lang", "ZH-HANT"); // Traditional
+    params.append("target_lang", "ZH-HANT");
 
     const res = await fetch("https://api-free.deepl.com/v2/translate", {
       method: "POST",
@@ -69,17 +69,41 @@ class DeepLTranslator implements Translator {
   }
 }
 
-export function getTranslator(): Translator {
-  const which = (process.env.TRANSLATOR || "claude").toLowerCase();
+function getFallbackTranslator(): Translator | null {
+  const which = (process.env.TRANSLATOR_FALLBACK || "").toLowerCase();
+  if (!which || which === "none") return null;
 
   if (which === "deepl") {
     const key = process.env.DEEPL_API_KEY;
-    if (!key) throw new Error("DEEPL_API_KEY is not set");
-    return new DeepLTranslator(key);
+    return key ? new DeepLTranslator(key) : null;
   }
 
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("ANTHROPIC_API_KEY is not set");
-  const model = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
-  return new ClaudeTranslator(key, model);
+  if (which === "claude") {
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) return null;
+    const model = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
+    return new ClaudeTranslator(key, model);
+  }
+
+  return null;
+}
+
+// Fill slots in `out` that CC-CEDICT missed, using the optional AI fallback.
+export async function fillMissingTranslations(
+  out: (string | null)[],
+  missingStrings: string[]
+): Promise<void> {
+  const translator = getFallbackTranslator();
+  if (!translator) return;
+
+  try {
+    const translated = await translator.translate(missingStrings);
+    let j = 0;
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] !== null) continue;
+      out[i] = translated[j++] ?? null;
+    }
+  } catch {
+    // Keep CC-CEDICT hits; leave the rest untranslated.
+  }
 }

@@ -5,7 +5,7 @@ import {
   applyTranslations,
   WordNotFoundError,
 } from "@/lib/dictionary";
-import { getTranslator } from "@/lib/translate";
+import { translateStrings } from "@/lib/cedict";
 import { cacheGet, cacheSet } from "@/lib/cache";
 import type { DictEntry } from "@/lib/types";
 
@@ -18,7 +18,7 @@ async function translateEntry(entry: DictEntry): Promise<DictEntry> {
   const cached = cacheGet<DictEntry>(mergedKey);
   if (cached) return cached;
 
-  const zh = await getTranslator().translate(collectStrings(entry));
+  const zh = await translateStrings(collectStrings(entry));
   const merged = applyTranslations(entry, zh);
   cacheSet(mergedKey, merged);
   return merged;
