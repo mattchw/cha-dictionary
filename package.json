@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "download-words": "node scripts/download-words.mjs",
-    "prebuild": "node -e \"const fs=require('fs'); if(!fs.existsSync('data/words.txt')||!fs.existsSync('data/frequency.txt')||!fs.existsSync('data/cedict.txt')) require('child_process').execSync('node scripts/download-words.mjs',{stdio:'inherit'})\""
+    "prebuild": "node -e \"const fs=require('fs'); if(!fs.existsSync('data/words.txt')||!fs.existsSync('data/frequency.txt')||!fs.existsSync('data/cedict.txt')||!fs.existsSync('data/c1c2-words.json')) require('child_process').execSync('node scripts/download-words.mjs',{stdio:'inherit'})\""
   },
   "dependencies": {
     "next": "14.2.15",

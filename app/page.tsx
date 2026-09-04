@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect } from "react";
 import { Search, Volume2, Loader2, X } from "lucide-react";
 import type { DictEntry } from "@/lib/types";
+import { pickRandomC2Words } from "@/lib/c2-words";
 
-const SUGGESTIONS = ["serendipity", "resilient", "nostalgia", "home"];
+const CHIP_COUNT = 4;
 type Status = "idle" | "loading" | "done" | "notfound" | "error";
 
 function highlightPrefix(word: string, prefix: string) {
@@ -27,12 +28,20 @@ export default function Home() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [chipWords, setChipWords] = useState<string[]>([]);
   const reqRef = useRef(0);
   const suggestRef = useRef(0);
+  const suppressSuggestRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setChipWords(pickRandomC2Words(CHIP_COUNT));
+  }, []);
+
+  useEffect(() => {
+    if (suppressSuggestRef.current) return;
+
     const q = input.trim();
     if (q.length < 2) {
       setSuggestions([]);
@@ -96,10 +105,12 @@ export default function Home() {
     if (!word) return;
     const id = ++reqRef.current;
 
+    suppressSuggestRef.current = true;
+    suggestRef.current++;
     setInput(word);
+    setActiveIndex(-1);
     setSuggestOpen(false);
     setSuggestions([]);
-    setActiveIndex(-1);
     setZhFailed(false);
     setEntry(null);
     setTranslating(false);
@@ -199,9 +210,16 @@ export default function Home() {
             aria-activedescendant={
               activeIndex >= 0 ? `suggestion-${activeIndex}` : undefined
             }
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              suppressSuggestRef.current = false;
+              setInput(e.target.value);
+            }}
             onKeyDown={onInputKeyDown}
-            onFocus={() => suggestions.length > 0 && setSuggestOpen(true)}
+            onFocus={() => {
+              if (!suppressSuggestRef.current && suggestions.length > 0) {
+                setSuggestOpen(true);
+              }
+            }}
             onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
           />
           {input && (
@@ -209,6 +227,7 @@ export default function Home() {
               type="button"
               className="dc-clear"
               onClick={() => {
+                suppressSuggestRef.current = false;
                 setInput("");
                 setSuggestOpen(false);
                 setSuggestions([]);
@@ -248,7 +267,7 @@ export default function Home() {
             Type an English word to see its meaning, an example, and its 香港繁體 translation.
           </p>
           <div className="dc-chips">
-            {SUGGESTIONS.map((w) => (
+            {chipWords.map((w) => (
               <button key={w} className="dc-chip" onClick={() => lookup(w)}>{w}</button>
             ))}
           </div>
