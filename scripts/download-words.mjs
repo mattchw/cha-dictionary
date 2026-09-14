@@ -41,13 +41,14 @@ function parseC1C2Words(csv) {
     if (!match) continue;
 
     const word = match[1].trim().toLowerCase();
+    const level = match[2];
     if (!/^[a-z]+$/.test(word) || seen.has(word)) continue;
 
     seen.add(word);
-    words.push(word);
+    words.push({ word, level });
   }
 
-  words.sort();
+  words.sort((a, b) => a.word.localeCompare(b.word));
   return words;
 }
 

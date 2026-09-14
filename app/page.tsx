@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, Volume2, Loader2, X } from "lucide-react";
+import { Search, Volume2, Loader2, X, Copy, Shuffle } from "lucide-react";
 import type { DictEntry } from "@/lib/types";
-import { pickRandomC2Words } from "@/lib/c2-words";
+import { pickRandomChips, type ChipWord } from "@/lib/c2-words";
 
 const CHIP_COUNT = 4;
 type Status = "idle" | "loading" | "done" | "notfound" | "error";
@@ -28,16 +28,51 @@ export default function Home() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [chipWords, setChipWords] = useState<string[]>([]);
+  const [chipWords, setChipWords] = useState<ChipWord[]>([]);
+  const [copied, setCopied] = useState(false);
   const reqRef = useRef(0);
   const suggestRef = useRef(0);
   const suppressSuggestRef = useRef(false);
+  const bootedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setChipWords(pickRandomC2Words(CHIP_COUNT));
+    setChipWords(pickRandomChips(CHIP_COUNT));
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+
+    const word = new URLSearchParams(window.location.search).get("word")?.trim();
+    if (word) void lookup(word);
   }, []);
+
+  function setWordInUrl(word: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("word", word);
+    window.history.replaceState(null, "", url);
+  }
+
+  function clearWordFromUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("word");
+    const next = url.pathname + (url.search || "");
+    window.history.replaceState(null, "", next);
+  }
+
+  function shuffleChips() {
+    setChipWords(pickRandomChips(CHIP_COUNT));
+  }
+
+  async function copyHeadword() {
+    if (!entry) return;
+    try {
+      await navigator.clipboard.writeText(entry.word);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  }
 
   useEffect(() => {
     if (suppressSuggestRef.current) return;
@@ -126,6 +161,7 @@ export default function Home() {
       if (reqRef.current !== id) return;
       setEntry(eng);
       setStatus("done");
+      setWordInUrl(eng.word);
 
       void loadTranslation(eng, id);
     } catch {
@@ -231,6 +267,7 @@ export default function Home() {
                 setInput("");
                 setSuggestOpen(false);
                 setSuggestions([]);
+                clearWordFromUrl();
                 inputRef.current?.focus();
               }}
               aria-label="Clear search"
@@ -266,9 +303,30 @@ export default function Home() {
           <p className="dc-empty-lead">
             Type an English word to see its meaning, an example, and its 香港繁體 translation.
           </p>
+          <div className="dc-chips-head">
+            <p className="dc-chips-label">Try an advanced word</p>
+            <button
+              type="button"
+              className="dc-shuffle"
+              onClick={shuffleChips}
+              aria-label="Shuffle suggestions"
+            >
+              <Shuffle size={15} strokeWidth={2.25} />
+              Shuffle
+            </button>
+          </div>
           <div className="dc-chips">
-            {chipWords.map((w) => (
-              <button key={w} className="dc-chip" onClick={() => lookup(w)}>{w}</button>
+            {chipWords.map((chip) => (
+              <button
+                key={chip.word}
+                className="dc-chip"
+                onClick={() => lookup(chip.word)}
+              >
+                <span className={`dc-cefr dc-cefr-${chip.level.toLowerCase()}`}>
+                  {chip.level}
+                </span>
+                {chip.word}
+              </button>
             ))}
           </div>
         </div>
@@ -297,9 +355,19 @@ export default function Home() {
               <h2 className="dc-word">{entry.word}</h2>
               {entry.phonetic && <span className="dc-phon">{entry.phonetic}</span>}
             </div>
-            <button className="dc-audio" onClick={playAudio} aria-label="Play pronunciation">
-              <Volume2 size={20} strokeWidth={2.25} />
-            </button>
+            <div className="dc-word-actions">
+              <button
+                type="button"
+                className={`dc-copy${copied ? " is-done" : ""}`}
+                onClick={() => void copyHeadword()}
+                aria-label={copied ? "Copied" : "Copy word"}
+              >
+                <Copy size={18} strokeWidth={2.25} />
+              </button>
+              <button className="dc-audio" onClick={playAudio} aria-label="Play pronunciation">
+                <Volume2 size={20} strokeWidth={2.25} />
+              </button>
+            </div>
           </div>
 
           <div className="dc-wordzh">
