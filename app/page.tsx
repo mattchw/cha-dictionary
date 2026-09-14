@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { Search, Volume2, Loader2, X, Copy, Shuffle } from "lucide-react";
 import type { DictEntry } from "@/lib/types";
 import { pickRandomChips, type ChipWord } from "@/lib/c2-words";
+import { LinkableText } from "@/components/linkable-text";
 
 const CHIP_COUNT = 4;
 type Status = "idle" | "loading" | "done" | "notfound" | "error";
@@ -150,6 +151,7 @@ export default function Home() {
     setEntry(null);
     setTranslating(false);
     setStatus("loading");
+    window.scrollTo({ top: 0, behavior: "smooth" });
 
     try {
       const res = await fetch(`/api/entry?word=${encodeURIComponent(word)}`);
@@ -387,7 +389,13 @@ export default function Home() {
                 <ol className="dc-defs">
                   {m.definitions.map((d, di) => (
                     <li className="dc-def" key={di}>
-                      <p className="dc-def-en">{d.en}</p>
+                      <p className="dc-def-en">
+                        <LinkableText
+                          text={d.en}
+                          headword={entry.word}
+                          onLookup={lookup}
+                        />
+                      </p>
                       {d.zh ? (
                         <p className="dc-def-zh dc-zh">{d.zh}</p>
                       ) : translating ? (
@@ -395,7 +403,15 @@ export default function Home() {
                       ) : null}
                       {d.example && (
                         <div className="dc-ex">
-                          <p className="dc-ex-en">“{d.example}”</p>
+                          <p className="dc-ex-en">
+                            “
+                            <LinkableText
+                              text={d.example}
+                              headword={entry.word}
+                              onLookup={lookup}
+                            />
+                            ”
+                          </p>
                           {d.exampleZh ? (
                             <p className="dc-ex-zh dc-zh">{d.exampleZh}</p>
                           ) : translating ? (
