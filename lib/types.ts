@@ -1,3 +1,5 @@
+export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
+
 export interface Definition {
   en: string;
   example: string | null;
@@ -15,5 +17,6 @@ export interface DictEntry {
   phonetic: string | null;
   audio: string | null;
   wordZh?: string | null;
+  cefr?: CefrLevel | null;
   meanings: Meaning[];
 }

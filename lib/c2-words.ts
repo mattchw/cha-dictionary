@@ -1,10 +1,9 @@
 import c1c2Words from "@/data/c1c2-words.json";
-
-export type CefrLevel = "C1" | "C2";
+import type { CefrLevel } from "@/lib/types";
 
 export type ChipWord = {
   word: string;
-  level: CefrLevel;
+  level: "C1" | "C2";
 };
 
 const pool = c1c2Words as ChipWord[];
@@ -12,7 +11,7 @@ const pool = c1c2Words as ChipWord[];
 // CEFR C1 + C2 headwords (Octanove / CEFR-J) for home-page suggestion chips.
 export function pickRandomChips(count: number): ChipWord[] {
   const copy = [...pool];
-  const n = Math.min(count, copy.length);
+  const n = Math.min(count, pool.length);
   const out: ChipWord[] = [];
 
   for (let i = 0; i < n; i++) {
@@ -22,4 +21,8 @@ export function pickRandomChips(count: number): ChipWord[] {
   }
 
   return out;
+}
+
+export function cefrBadgeClass(level: CefrLevel): string {
+  return `dc-cefr dc-cefr-${level.toLowerCase()}`;
 }

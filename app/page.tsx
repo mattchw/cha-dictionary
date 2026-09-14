@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Search, Volume2, Loader2, X, Copy, Shuffle } from "lucide-react";
 import type { DictEntry } from "@/lib/types";
-import { pickRandomChips, type ChipWord } from "@/lib/c2-words";
+import { pickRandomChips, cefrBadgeClass, type ChipWord } from "@/lib/c2-words";
 import { LinkableText } from "@/components/linkable-text";
 
 const CHIP_COUNT = 4;
@@ -324,7 +324,7 @@ export default function Home() {
                 className="dc-chip"
                 onClick={() => lookup(chip.word)}
               >
-                <span className={`dc-cefr dc-cefr-${chip.level.toLowerCase()}`}>
+                <span className={cefrBadgeClass(chip.level)}>
                   {chip.level}
                 </span>
                 {chip.word}
@@ -354,7 +354,12 @@ export default function Home() {
         <article className="dc-result">
           <div className="dc-wordrow">
             <div>
-              <h2 className="dc-word">{entry.word}</h2>
+              <div className="dc-wordline">
+                <h2 className="dc-word">{entry.word}</h2>
+                {entry.cefr && (
+                  <span className={cefrBadgeClass(entry.cefr)}>{entry.cefr}</span>
+                )}
+              </div>
               {entry.phonetic && <span className="dc-phon">{entry.phonetic}</span>}
             </div>
             <div className="dc-word-actions">

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchEnglishEntry, WordNotFoundError } from "@/lib/dictionary";
+import { lookupCefrLevel } from "@/lib/cefr";
 import { cacheGet, cacheSet } from "@/lib/cache";
 import type { DictEntry } from "@/lib/types";
 
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
       entry = await fetchEnglishEntry(word);
       cacheSet(key, entry);
     }
-    return NextResponse.json(entry);
+    return NextResponse.json({ ...entry, cefr: lookupCefrLevel(entry.word) });
   } catch (err) {
     if (err instanceof WordNotFoundError)
       return NextResponse.json({ error: "not_found" }, { status: 404 });
