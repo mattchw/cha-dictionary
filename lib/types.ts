@@ -17,6 +17,13 @@ export interface DictEntry {
   phonetic: string | null;
   audio: string | null;
   wordZh?: string | null;
+  relatedWords?: string[];
   cefr?: CefrLevel | null;
   meanings: Meaning[];
+}
+
+export interface WordOfDay {
+  word: string;
+  date: string;
+  cefr: CefrLevel | null;
 }

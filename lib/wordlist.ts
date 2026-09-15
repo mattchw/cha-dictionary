@@ -3,6 +3,7 @@ import { join } from "path";
 
 let words: string[] | null = null;
 let freqWords: { word: string; freq: number }[] | null = null;
+let freqMap: Map<string, number> | null = null;
 
 function loadWords(): string[] {
   if (words) return words;
@@ -29,6 +30,16 @@ function loadFreqWords(): { word: string; freq: number }[] {
       };
     });
   return freqWords;
+}
+
+function loadFreqMap(): Map<string, number> {
+  if (freqMap) return freqMap;
+  freqMap = new Map(loadFreqWords().map(({ word, freq }) => [word, freq]));
+  return freqMap;
+}
+
+export function wordFrequency(word: string): number {
+  return loadFreqMap().get(word.toLowerCase()) ?? 0;
 }
 
 function lowerBound(arr: string[], prefix: string): number {

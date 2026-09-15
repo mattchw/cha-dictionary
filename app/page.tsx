@@ -2,9 +2,17 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Search, Volume2, Loader2, X, Copy, Shuffle } from "lucide-react";
-import type { DictEntry } from "@/lib/types";
+import type { DictEntry, WordOfDay } from "@/lib/types";
 import { pickRandomChips, cefrBadgeClass, type ChipWord } from "@/lib/c2-words";
 import { LinkableText } from "@/components/linkable-text";
+import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  getCachedEntry,
+  saveCachedEntry,
+  listRecentEntries,
+} from "@/lib/offline-cache";
+import { offlineSuggest } from "@/lib/offline-suggest";
+import { getWordOfDayClient } from "@/lib/word-of-day-client";
 
 const CHIP_COUNT = 4;
 type Status = "idle" | "loading" | "done" | "notfound" | "error";
@@ -30,6 +38,10 @@ export default function Home() {
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [chipWords, setChipWords] = useState<ChipWord[]>([]);
+  const [wordOfDay, setWordOfDay] = useState<WordOfDay | null>(null);
+  const [recentEntries, setRecentEntries] = useState<DictEntry[]>([]);
+  const [isOnline, setIsOnline] = useState(true);
+  const [fromCache, setFromCache] = useState(false);
   const [copied, setCopied] = useState(false);
   const reqRef = useRef(0);
   const suggestRef = useRef(0);
@@ -38,13 +50,41 @@ export default function Home() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  async function refreshRecent() {
+    const recent = await listRecentEntries();
+    setRecentEntries(recent);
+  }
+
   useEffect(() => {
     setChipWords(pickRandomChips(CHIP_COUNT));
-    if (bootedRef.current) return;
-    bootedRef.current = true;
+    setWordOfDay(getWordOfDayClient());
+    void refreshRecent();
 
-    const word = new URLSearchParams(window.location.search).get("word")?.trim();
-    if (word) void lookup(word);
+    setIsOnline(navigator.onLine);
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    if (navigator.onLine) {
+      void fetch("/api/word-of-the-day")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.word) setWordOfDay(data as WordOfDay);
+        })
+        .catch(() => {});
+    }
+
+    if (!bootedRef.current) {
+      bootedRef.current = true;
+      const word = new URLSearchParams(window.location.search).get("word")?.trim();
+      if (word) void lookup(word);
+    }
+
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
   }, []);
 
   function setWordInUrl(word: string) {
@@ -58,6 +98,24 @@ export default function Home() {
     url.searchParams.delete("word");
     const next = url.pathname + (url.search || "");
     window.history.replaceState(null, "", next);
+  }
+
+  function goHome() {
+    reqRef.current++;
+    suggestRef.current++;
+    suppressSuggestRef.current = false;
+    setInput("");
+    setEntry(null);
+    setStatus("idle");
+    setTranslating(false);
+    setZhFailed(false);
+    setFromCache(false);
+    setSuggestions([]);
+    setSuggestOpen(false);
+    setActiveIndex(-1);
+    setCopied(false);
+    clearWordFromUrl();
+    inputRef.current?.focus();
   }
 
   function shuffleChips() {
@@ -89,19 +147,24 @@ export default function Home() {
     const id = ++suggestRef.current;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/suggest?q=${encodeURIComponent(q)}&limit=8`
-        );
-        if (suggestRef.current !== id) return;
-        if (!res.ok) {
-          setSuggestions([]);
-          setSuggestOpen(false);
-          return;
+        let items: string[];
+        if (!navigator.onLine) {
+          items = await offlineSuggest(q, 8);
+        } else {
+          const res = await fetch(
+            `/api/suggest?q=${encodeURIComponent(q)}&limit=8`
+          );
+          if (suggestRef.current !== id) return;
+          if (!res.ok) {
+            items = await offlineSuggest(q, 8);
+          } else {
+            const data = (await res.json()) as { suggestions: string[] };
+            items = data.suggestions;
+          }
         }
-        const data = (await res.json()) as { suggestions: string[] };
         if (suggestRef.current !== id) return;
-        setSuggestions(data.suggestions);
-        setSuggestOpen(data.suggestions.length > 0);
+        setSuggestions(items);
+        setSuggestOpen(items.length > 0);
         setActiveIndex(-1);
       } catch {
         if (suggestRef.current === id) {
@@ -125,7 +188,12 @@ export default function Home() {
       if (reqRef.current !== id) return;
       if (tRes.ok) {
         const merged: DictEntry = await tRes.json();
-        if (reqRef.current === id) setEntry(merged);
+        if (reqRef.current === id) {
+          setEntry(merged);
+          setFromCache(false);
+          await saveCachedEntry(merged);
+          void refreshRecent();
+        }
       } else {
         setZhFailed(true);
       }
@@ -148,16 +216,32 @@ export default function Home() {
     setSuggestOpen(false);
     setSuggestions([]);
     setZhFailed(false);
+    setFromCache(false);
     setEntry(null);
     setTranslating(false);
     setStatus("loading");
     window.scrollTo({ top: 0, behavior: "smooth" });
 
+    const lc = word.toLowerCase();
+
+    if (!navigator.onLine) {
+      const cached = await getCachedEntry(lc);
+      if (reqRef.current !== id) return;
+      if (cached?.wordZh) {
+        setEntry(cached);
+        setFromCache(true);
+        setStatus("done");
+        setWordInUrl(cached.word);
+        return;
+      }
+      return setStatus("error");
+    }
+
     try {
       const res = await fetch(`/api/entry?word=${encodeURIComponent(word)}`);
       if (reqRef.current !== id) return;
       if (res.status === 404) return setStatus("notfound");
-      if (!res.ok) return setStatus("error");
+      if (!res.ok) throw new Error("lookup_failed");
 
       const eng: DictEntry = await res.json();
       if (reqRef.current !== id) return;
@@ -167,7 +251,16 @@ export default function Home() {
 
       void loadTranslation(eng, id);
     } catch {
-      if (reqRef.current === id) setStatus("error");
+      if (reqRef.current !== id) return;
+      const cached = await getCachedEntry(lc);
+      if (cached?.wordZh) {
+        setEntry(cached);
+        setFromCache(true);
+        setStatus("done");
+        setWordInUrl(cached.word);
+        return;
+      }
+      setStatus("error");
     }
   }
 
@@ -223,10 +316,21 @@ export default function Home() {
   return (
     <div className="dc-wrap">
       <header className="dc-head">
-        <div className="dc-mark" aria-hidden="true">查</div>
-        <div>
+        <button
+          type="button"
+          className="dc-mark"
+          onClick={goHome}
+          aria-label="Back to home"
+        >
+          查
+        </button>
+        <div className="dc-head-main">
           <h1 className="dc-title">英漢詞典</h1>
           <p className="dc-sub">English · 香港繁體</p>
+        </div>
+        <div className="dc-head-actions">
+          {!isOnline && <span className="dc-offline-badge">Offline</span>}
+          <ThemeToggle />
         </div>
       </header>
 
@@ -305,6 +409,40 @@ export default function Home() {
           <p className="dc-empty-lead">
             Type an English word to see its meaning, an example, and its 香港繁體 translation.
           </p>
+          {wordOfDay && (
+            <div className="dc-wotd">
+              <p className="dc-wotd-label">Word of the day</p>
+              <button
+                type="button"
+                className="dc-wotd-card"
+                onClick={() => lookup(wordOfDay.word)}
+              >
+                <span className="dc-wotd-word">{wordOfDay.word}</span>
+                {wordOfDay.cefr && (
+                  <span className={cefrBadgeClass(wordOfDay.cefr)}>{wordOfDay.cefr}</span>
+                )}
+              </button>
+            </div>
+          )}
+          {recentEntries.length > 0 && (
+            <div className="dc-recent">
+              <p className="dc-recent-label">
+                {isOnline ? "Recent lookups" : "Saved offline"}
+              </p>
+              <div className="dc-recent-chips">
+                {recentEntries.map((item) => (
+                  <button
+                    key={item.word}
+                    type="button"
+                    className="dc-recent-chip"
+                    onClick={() => lookup(item.word)}
+                  >
+                    {item.word}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="dc-chips-head">
             <p className="dc-chips-label">Try an advanced word</p>
             <button
@@ -346,12 +484,19 @@ export default function Home() {
 
       {status === "error" && (
         <div className="dc-empty">
-          <p className="dc-empty-lead">The lookup didn’t go through. Try again in a moment.</p>
+          <p className="dc-empty-lead">
+            {!isOnline
+              ? "This word isn’t saved offline yet. Look it up while connected, then it’ll be available on the MTR."
+              : "The lookup didn’t go through. Try again in a moment."}
+          </p>
         </div>
       )}
 
       {status === "done" && entry && (
         <article className="dc-result">
+          {fromCache && (
+            <p className="dc-cached-note">Showing a saved offline lookup.</p>
+          )}
           <div className="dc-wordrow">
             <div>
               <div className="dc-wordline">
@@ -384,6 +529,24 @@ export default function Home() {
               <span className="dc-pending">翻譯中…</span>
             ) : null}
           </div>
+
+          {entry.relatedWords && entry.relatedWords.length > 0 && (
+            <div className="dc-related">
+              <p className="dc-related-label">Related words</p>
+              <div className="dc-related-chips">
+                {entry.relatedWords.map((word) => (
+                  <button
+                    key={word}
+                    type="button"
+                    className="dc-related-chip"
+                    onClick={() => lookup(word)}
+                  >
+                    {word}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {zhFailed && <p className="dc-zh-fail">翻譯暫時無法載入，只顯示英文。</p>}
 

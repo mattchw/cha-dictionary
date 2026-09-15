@@ -1,3 +1,4 @@
+import { findRelatedWords } from "./cedict";
 import type { DictEntry } from "./types";
 
 const CAP_DEFS_PER_MEANING = 3;
@@ -147,5 +148,10 @@ export function applyTranslations(
       return { ...d, zh: dz, exampleZh: ez };
     }),
   }));
-  return { ...entry, wordZh, meanings };
+  return {
+    ...entry,
+    wordZh,
+    meanings,
+    relatedWords: entry.relatedWords ?? findRelatedWords(entry.word),
+  };
 }

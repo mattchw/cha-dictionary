@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "download-words": "node scripts/download-words.mjs",
-    "prebuild": "node -e \"const fs=require('fs'); if(!fs.existsSync('data/words.txt')||!fs.existsSync('data/frequency.txt')||!fs.existsSync('data/cedict.txt')||!fs.existsSync('data/cefr-levels.json')||!fs.existsSync('data/c1c2-words.json')) require('child_process').execSync('node scripts/download-words.mjs',{stdio:'inherit'})\""
+    "copy-public-data": "node scripts/copy-public-data.mjs",
+    "prebuild": "node -e \"const fs=require('fs'); if(!fs.existsSync('data/words.txt')||!fs.existsSync('data/frequency.txt')||!fs.existsSync('data/cedict.txt')||!fs.existsSync('data/cefr-levels.json')||!fs.existsSync('data/c1c2-words.json')) require('child_process').execSync('node scripts/download-words.mjs',{stdio:'inherit'})\" && node scripts/copy-public-data.mjs"
   },
   "dependencies": {
     "next": "14.2.15",
