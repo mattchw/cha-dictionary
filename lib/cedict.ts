@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
+import { phraseLookupKeys, lookupPhraseZh } from "./phrases";
 import { wordFrequency } from "./wordlist";
 import { fillMissingTranslations } from "./translate";
 
@@ -140,13 +141,35 @@ function dedupeSubsumed(headwords: string[]): string[] {
   return kept;
 }
 
+function entriesForQuery(english: string): CedictEntry[] {
+  const word = english.toLowerCase().trim();
+  if (!word) return [];
+
+  const keys = word.includes(" ") ? phraseLookupKeys(word) : [word];
+  const { reverse } = loadIndex();
+  const out: CedictEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const key of keys) {
+    for (const entry of reverse.get(key) ?? []) {
+      if (seen.has(entry.traditional)) continue;
+      seen.add(entry.traditional);
+      out.push(entry);
+    }
+  }
+
+  return out;
+}
+
 function lookupCedictGlosses(english: string, limit = 5): string[] {
   const word = english.toLowerCase().trim();
   if (!word) return [];
 
-  const { reverse } = loadIndex();
-  const entries = reverse.get(word);
-  if (!entries?.length) return [];
+  const entries = entriesForQuery(word);
+  if (!entries.length) {
+    const phraseZh = lookupPhraseZh(word);
+    return phraseZh ? [phraseZh] : [];
+  }
 
   const scored = entries
     .map((entry) => ({
@@ -162,20 +185,11 @@ function lookupCedictGlosses(english: string, limit = 5): string[] {
 
 // Look up a human-curated 香港繁體 gloss for an English word or short phrase.
 export function lookupCedict(english: string): string | null {
-  const key = english.toLowerCase().trim();
-  if (!key) return null;
+  const glosses = lookupCedictGlosses(english, 4);
+  if (glosses.length) return glosses.join("、");
 
-  const hits = loadIndex().reverse.get(key);
-  if (!hits?.length) return null;
-
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const entry of hits) {
-    if (seen.has(entry.traditional)) continue;
-    seen.add(entry.traditional);
-    out.push(entry.traditional);
-  }
-  return out.join("、");
+  const phraseZh = lookupPhraseZh(english);
+  return phraseZh ?? null;
 }
 
 const GLOSS_WORD_RE = /^[a-z][a-z'-]*$/;

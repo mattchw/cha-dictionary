@@ -6,6 +6,7 @@ const PRECACHE = [
   "/data/frequency.txt",
   "/data/cefr-levels.json",
   "/data/c1c2-words.json",
+  "/data/phrases.json",
 ];
 
 self.addEventListener("install", (event) => {

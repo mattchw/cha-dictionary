@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(root, "public", "data");
-const files = ["frequency.txt", "cefr-levels.json", "c1c2-words.json"];
+const files = ["frequency.txt", "cefr-levels.json", "c1c2-words.json", "phrases.json"];
 
 mkdirSync(outDir, { recursive: true });
 

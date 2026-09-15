@@ -18,6 +18,7 @@ export interface DictEntry {
   audio: string | null;
   wordZh?: string | null;
   relatedWords?: string[];
+  isPhrase?: boolean;
   cefr?: CefrLevel | null;
   meanings: Meaning[];
 }

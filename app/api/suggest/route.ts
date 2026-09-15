@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { suggestWords } from "@/lib/wordlist";
+import { suggest } from "@/lib/suggest";
 
 export const runtime = "nodejs";
 
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   );
 
   try {
-    return NextResponse.json({ suggestions: suggestWords(q, limit) });
+    return NextResponse.json({ suggestions: suggest(q, limit) });
   } catch {
     return NextResponse.json({ error: "wordlist_unavailable" }, { status: 503 });
   }

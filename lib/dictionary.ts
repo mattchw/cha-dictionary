@@ -1,7 +1,9 @@
 import { findRelatedWords } from "./cedict";
-import type { DictEntry } from "./types";
+import type { DictEntry, Meaning } from "./types";
 
-const CAP_DEFS_PER_MEANING = 3;
+import { INITIAL_DEFS_PER_MEANING, MAX_DEFS_PER_MEANING } from "./dictionary-constants";
+
+export { INITIAL_DEFS_PER_MEANING, MAX_DEFS_PER_MEANING };
 const FETCH_TIMEOUT_MS = 10_000;
 
 export class WordNotFoundError extends Error {}
@@ -53,7 +55,7 @@ async function fetchFromFreeDictionary(word: string): Promise<DictEntry> {
     .map((entry) => ({
       partOfSpeech: entry.partOfSpeech,
       definitions: (entry.senses || [])
-        .slice(0, CAP_DEFS_PER_MEANING)
+        .slice(0, MAX_DEFS_PER_MEANING)
         .map((sense) => ({
           en: sense.definition,
           example: sense.examples?.[0] ?? null,
@@ -97,7 +99,7 @@ async function fetchFromDictionaryApiDev(word: string): Promise<DictEntry> {
   const meanings: DictEntry["meanings"] = (first.meanings || []).map((m: any) => ({
     partOfSpeech: m.partOfSpeech,
     definitions: (m.definitions || [])
-      .slice(0, CAP_DEFS_PER_MEANING)
+      .slice(0, MAX_DEFS_PER_MEANING)
       .map((d: any) => ({ en: d.definition, example: d.example ?? null })),
   }));
 
@@ -121,11 +123,26 @@ export async function fetchEnglishEntry(word: string): Promise<DictEntry> {
   return await fetchFromDictionaryApiDev(word);
 }
 
+export function collectStringsForMeaning(
+  meaning: Meaning,
+  fromDefIndex = 0
+): string[] {
+  const out: string[] = [];
+  for (const d of meaning.definitions.slice(fromDefIndex)) {
+    out.push(d.en);
+    if (d.example) out.push(d.example);
+  }
+  return out;
+}
+
 // Flatten every string that needs translating, in a fixed order.
-export function collectStrings(entry: DictEntry): string[] {
+export function collectStrings(
+  entry: DictEntry,
+  defsPerMeaning = Infinity
+): string[] {
   const out = [entry.word];
   for (const m of entry.meanings) {
-    for (const d of m.definitions) {
+    for (const d of m.definitions.slice(0, defsPerMeaning)) {
       out.push(d.en);
       if (d.example) out.push(d.example);
     }
@@ -133,16 +150,35 @@ export function collectStrings(entry: DictEntry): string[] {
   return out;
 }
 
+export function applyTranslationsToMeaning(
+  meaning: Meaning,
+  fromDefIndex: number,
+  zh: (string | null)[]
+): Meaning {
+  let i = 0;
+  return {
+    partOfSpeech: meaning.partOfSpeech,
+    definitions: meaning.definitions.map((d, di) => {
+      if (di < fromDefIndex) return d;
+      const dz = zh[i++] ?? null;
+      const ez = d.example ? zh[i++] ?? null : null;
+      return { ...d, zh: dz, exampleZh: ez };
+    }),
+  };
+}
+
 // Re-walk in the same order and attach the Traditional Chinese strings.
 export function applyTranslations(
   entry: DictEntry,
-  zh: (string | null)[]
+  zh: (string | null)[],
+  defsPerMeaning = Infinity
 ): DictEntry {
   let i = 0;
   const wordZh = zh[i++] ?? null;
   const meanings = entry.meanings.map((m) => ({
     partOfSpeech: m.partOfSpeech,
-    definitions: m.definitions.map((d) => {
+    definitions: m.definitions.map((d, di) => {
+      if (di >= defsPerMeaning) return d;
       const dz = zh[i++] ?? null;
       const ez = d.example ? zh[i++] ?? null : null;
       return { ...d, zh: dz, exampleZh: ez };

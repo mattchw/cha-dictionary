@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, Volume2, Loader2, X, Copy, Shuffle } from "lucide-react";
+import { Search, Volume2, X, Copy, Shuffle } from "lucide-react";
+import { LoadingSkeleton, SkelLine } from "@/components/skeleton";
 import type { DictEntry, WordOfDay } from "@/lib/types";
 import { pickRandomChips, cefrBadgeClass, type ChipWord } from "@/lib/c2-words";
+import { pickRandomPhrasalChips, type PhrasalChip } from "@/lib/phrasal-chips";
 import { LinkableText } from "@/components/linkable-text";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
@@ -13,8 +15,12 @@ import {
 } from "@/lib/offline-cache";
 import { offlineSuggest } from "@/lib/offline-suggest";
 import { getWordOfDayClient } from "@/lib/word-of-day-client";
+import { spellSuggestClient } from "@/lib/spell-suggest-client";
+import { formatEntryAsText } from "@/lib/format-entry";
+import { INITIAL_DEFS_PER_MEANING } from "@/lib/dictionary-constants";
 
 const CHIP_COUNT = 4;
+const PHRASAL_CHIP_COUNT = 4;
 type Status = "idle" | "loading" | "done" | "notfound" | "error";
 
 function highlightPrefix(word: string, prefix: string) {
@@ -38,17 +44,25 @@ export default function Home() {
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [chipWords, setChipWords] = useState<ChipWord[]>([]);
+  const [phrasalChips, setPhrasalChips] = useState<PhrasalChip[]>([]);
   const [wordOfDay, setWordOfDay] = useState<WordOfDay | null>(null);
   const [recentEntries, setRecentEntries] = useState<DictEntry[]>([]);
   const [isOnline, setIsOnline] = useState(true);
   const [fromCache, setFromCache] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [entryCopied, setEntryCopied] = useState(false);
+  const [spellSuggestions, setSpellSuggestions] = useState<string[]>([]);
+  const [expandedMeanings, setExpandedMeanings] = useState<Set<number>>(new Set());
+  const [expandingMeaning, setExpandingMeaning] = useState<number | null>(null);
   const reqRef = useRef(0);
   const suggestRef = useRef(0);
   const suppressSuggestRef = useRef(false);
+  const skipHistoryRef = useRef(false);
   const bootedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   async function refreshRecent() {
     const recent = await listRecentEntries();
@@ -57,6 +71,7 @@ export default function Home() {
 
   useEffect(() => {
     setChipWords(pickRandomChips(CHIP_COUNT));
+    setPhrasalChips(pickRandomPhrasalChips(PHRASAL_CHIP_COUNT));
     setWordOfDay(getWordOfDayClient());
     void refreshRecent();
 
@@ -81,26 +96,67 @@ export default function Home() {
       if (word) void lookup(word);
     }
 
+    const onPopState = () => {
+      const word = new URLSearchParams(window.location.search).get("word")?.trim();
+      skipHistoryRef.current = true;
+      if (word) void lookup(word);
+      else resetToIdle();
+    };
+    window.addEventListener("popstate", onPopState);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && statusRef.current !== "idle") {
+        goHome();
+        return;
+      }
+      if (e.key === "/") {
+        const tag = (document.activeElement as HTMLElement | null)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, []);
 
-  function setWordInUrl(word: string) {
+  function pushWordInUrl(word: string) {
     const url = new URL(window.location.href);
     url.searchParams.set("word", word);
-    window.history.replaceState(null, "", url);
+    window.history.pushState({ word }, "", url);
   }
 
-  function clearWordFromUrl() {
+  function pushHomeInUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("word");
+    const next = url.pathname + (url.search || "");
+    window.history.pushState(null, "", next);
+  }
+
+  function syncWordInHistory(word: string) {
+    if (skipHistoryRef.current) {
+      skipHistoryRef.current = false;
+      return;
+    }
+    const current = new URLSearchParams(window.location.search).get("word")?.toLowerCase();
+    if (current === word.toLowerCase()) return;
+    pushWordInUrl(word);
+  }
+
+  function replaceHomeInUrl() {
     const url = new URL(window.location.href);
     url.searchParams.delete("word");
     const next = url.pathname + (url.search || "");
     window.history.replaceState(null, "", next);
   }
 
-  function goHome() {
+  function resetToIdle() {
     reqRef.current++;
     suggestRef.current++;
     suppressSuggestRef.current = false;
@@ -110,16 +166,25 @@ export default function Home() {
     setTranslating(false);
     setZhFailed(false);
     setFromCache(false);
+    setSpellSuggestions([]);
     setSuggestions([]);
     setSuggestOpen(false);
     setActiveIndex(-1);
     setCopied(false);
-    clearWordFromUrl();
+    setEntryCopied(false);
+    setExpandedMeanings(new Set());
+    setExpandingMeaning(null);
     inputRef.current?.focus();
+  }
+
+  function goHome() {
+    resetToIdle();
+    pushHomeInUrl();
   }
 
   function shuffleChips() {
     setChipWords(pickRandomChips(CHIP_COUNT));
+    setPhrasalChips(pickRandomPhrasalChips(PHRASAL_CHIP_COUNT));
   }
 
   async function copyHeadword() {
@@ -132,6 +197,93 @@ export default function Home() {
       // clipboard unavailable
     }
   }
+
+  async function showMoreSenses(meaningIndex: number) {
+    if (!entry || expandedMeanings.has(meaningIndex)) return;
+
+    const hidden = entry.meanings[meaningIndex].definitions.slice(
+      INITIAL_DEFS_PER_MEANING
+    );
+    if (!hidden.length) return;
+
+    setExpandedMeanings((prev) => new Set(prev).add(meaningIndex));
+
+    const needsTranslate = hidden.some((d) => !d.zh);
+    if (!needsTranslate || !navigator.onLine) return;
+
+    setExpandingMeaning(meaningIndex);
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entry,
+          meaningIndex,
+          fromDefIndex: INITIAL_DEFS_PER_MEANING,
+        }),
+      });
+      if (res.ok) {
+        const merged: DictEntry = await res.json();
+        setEntry((prev) => {
+          if (!prev) return merged;
+          const meanings = prev.meanings.map((m, i) => {
+            if (i !== meaningIndex) return m;
+            return {
+              ...m,
+              definitions: m.definitions.map((d, di) =>
+                di < INITIAL_DEFS_PER_MEANING
+                  ? d
+                  : merged.meanings[i].definitions[di] ?? d
+              ),
+            };
+          });
+          const updated = { ...prev, meanings };
+          void saveCachedEntry(updated);
+          return updated;
+        });
+      }
+    } catch {
+      // Extra senses stay English-only
+    } finally {
+      setExpandingMeaning(null);
+    }
+  }
+
+  async function copyEntry() {
+    if (!entry) return;
+    try {
+      await navigator.clipboard.writeText(formatEntryAsText(entry));
+      setEntryCopied(true);
+      window.setTimeout(() => setEntryCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  }
+
+  useEffect(() => {
+    if (status !== "notfound" || !input.trim()) {
+      setSpellSuggestions([]);
+      return;
+    }
+
+    const q = input.trim();
+    void (async () => {
+      try {
+        let items: string[];
+        if (!navigator.onLine) {
+          items = await spellSuggestClient(q);
+        } else {
+          const res = await fetch(`/api/spell?q=${encodeURIComponent(q)}&limit=3`);
+          items = res.ok
+            ? ((await res.json()) as { suggestions: string[] }).suggestions
+            : await spellSuggestClient(q);
+        }
+        setSpellSuggestions(items);
+      } catch {
+        setSpellSuggestions([]);
+      }
+    })();
+  }, [status, input]);
 
   useEffect(() => {
     if (suppressSuggestRef.current) return;
@@ -217,6 +369,7 @@ export default function Home() {
     setSuggestions([]);
     setZhFailed(false);
     setFromCache(false);
+    setSpellSuggestions([]);
     setEntry(null);
     setTranslating(false);
     setStatus("loading");
@@ -231,7 +384,7 @@ export default function Home() {
         setEntry(cached);
         setFromCache(true);
         setStatus("done");
-        setWordInUrl(cached.word);
+        syncWordInHistory(cached.word);
         return;
       }
       return setStatus("error");
@@ -247,7 +400,7 @@ export default function Home() {
       if (reqRef.current !== id) return;
       setEntry(eng);
       setStatus("done");
-      setWordInUrl(eng.word);
+      syncWordInHistory(eng.word);
 
       void loadTranslation(eng, id);
     } catch {
@@ -257,7 +410,7 @@ export default function Home() {
         setEntry(cached);
         setFromCache(true);
         setStatus("done");
-        setWordInUrl(cached.word);
+        syncWordInHistory(cached.word);
         return;
       }
       setStatus("error");
@@ -282,9 +435,6 @@ export default function Home() {
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActiveIndex((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
-    } else if (e.key === "Escape") {
-      setSuggestOpen(false);
-      setActiveIndex(-1);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (activeIndex >= 0) selectSuggestion(suggestions[activeIndex]);
@@ -373,7 +523,7 @@ export default function Home() {
                 setInput("");
                 setSuggestOpen(false);
                 setSuggestions([]);
-                clearWordFromUrl();
+                replaceHomeInUrl();
                 inputRef.current?.focus();
               }}
               aria-label="Clear search"
@@ -407,7 +557,7 @@ export default function Home() {
       {status === "idle" && (
         <div className="dc-empty">
           <p className="dc-empty-lead">
-            Type an English word to see its meaning, an example, and its 香港繁體 translation.
+            Type a word or phrase — try <em>look up</em>, <em>give up</em>, or <em>on the other hand</em>.
           </p>
           {wordOfDay && (
             <div className="dc-wotd">
@@ -443,6 +593,26 @@ export default function Home() {
               </div>
             </div>
           )}
+          {phrasalChips.length > 0 && (
+            <>
+              <div className="dc-chips-head">
+                <p className="dc-chips-label">Common phrases</p>
+              </div>
+              <div className="dc-chips dc-chips-phrasal">
+                {phrasalChips.map((chip) => (
+                  <button
+                    key={chip.phrase}
+                    type="button"
+                    className="dc-chip"
+                    onClick={() => lookup(chip.phrase)}
+                  >
+                    <span className="dc-phrase-badge">phrase</span>
+                    {chip.phrase}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="dc-chips-head">
             <p className="dc-chips-label">Try an advanced word</p>
             <button
@@ -472,13 +642,28 @@ export default function Home() {
         </div>
       )}
 
-      {status === "loading" && (
-        <div className="dc-note"><Loader2 className="dc-spin" size={16} /> Looking up…</div>
-      )}
+      {status === "loading" && <LoadingSkeleton />}
 
       {status === "notfound" && (
         <div className="dc-empty">
           <p className="dc-empty-lead">No entry found for “{input}”. Check the spelling, or try another word.</p>
+          {spellSuggestions.length > 0 && (
+            <div className="dc-spell">
+              <p className="dc-spell-label">Did you mean</p>
+              <div className="dc-spell-chips">
+                {spellSuggestions.map((word) => (
+                  <button
+                    key={word}
+                    type="button"
+                    className="dc-spell-chip"
+                    onClick={() => lookup(word)}
+                  >
+                    {word}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -501,6 +686,9 @@ export default function Home() {
             <div>
               <div className="dc-wordline">
                 <h2 className="dc-word">{entry.word}</h2>
+                {entry.isPhrase && (
+                  <span className="dc-phrase-badge">phrase</span>
+                )}
                 {entry.cefr && (
                   <span className={cefrBadgeClass(entry.cefr)}>{entry.cefr}</span>
                 )}
@@ -513,8 +701,17 @@ export default function Home() {
                 className={`dc-copy${copied ? " is-done" : ""}`}
                 onClick={() => void copyHeadword()}
                 aria-label={copied ? "Copied" : "Copy word"}
+                title="Copy word"
               >
                 <Copy size={18} strokeWidth={2.25} />
+              </button>
+              <button
+                type="button"
+                className={`dc-copy-entry${entryCopied ? " is-done" : ""}`}
+                onClick={() => void copyEntry()}
+                title="Copy full entry"
+              >
+                {entryCopied ? "Copied" : "Copy entry"}
               </button>
               <button className="dc-audio" onClick={playAudio} aria-label="Play pronunciation">
                 <Volume2 size={20} strokeWidth={2.25} />
@@ -526,7 +723,7 @@ export default function Home() {
             {entry.wordZh ? (
               <span className="dc-zh dc-word-gloss">{entry.wordZh}</span>
             ) : translating ? (
-              <span className="dc-pending">翻譯中…</span>
+              <SkelLine className="dc-skel-gloss-inline" />
             ) : null}
           </div>
 
@@ -551,12 +748,22 @@ export default function Home() {
           {zhFailed && <p className="dc-zh-fail">翻譯暫時無法載入，只顯示英文。</p>}
 
           <div className="dc-senses">
-            {entry.meanings.map((m, mi) => (
+            {entry.meanings.map((m, mi) => {
+              const isExpanded = expandedMeanings.has(mi);
+              const visibleDefs = isExpanded
+                ? m.definitions
+                : m.definitions.slice(0, INITIAL_DEFS_PER_MEANING);
+              const hiddenCount = m.definitions.length - INITIAL_DEFS_PER_MEANING;
+
+              return (
               <section className="dc-sense" key={mi}>
                 <h3 className="dc-pos">{m.partOfSpeech}</h3>
                 <ol className="dc-defs">
-                  {m.definitions.map((d, di) => (
-                    <li className="dc-def" key={di}>
+                  {visibleDefs.map((d, di) => (
+                    <li
+                      className={`dc-def${isExpanded && di >= INITIAL_DEFS_PER_MEANING ? " dc-def-new" : ""}`}
+                      key={`${mi}-${di}-${d.en}`}
+                    >
                       <p className="dc-def-en">
                         <LinkableText
                           text={d.en}
@@ -566,8 +773,8 @@ export default function Home() {
                       </p>
                       {d.zh ? (
                         <p className="dc-def-zh dc-zh">{d.zh}</p>
-                      ) : translating ? (
-                        <p className="dc-def-zh dc-zh"><span className="dc-pending">翻譯中…</span></p>
+                      ) : (translating || (expandingMeaning === mi && di >= INITIAL_DEFS_PER_MEANING)) && !d.zh ? (
+                        <p className="dc-def-zh"><SkelLine className="dc-skel-def-zh-inline" /></p>
                       ) : null}
                       {d.example && (
                         <div className="dc-ex">
@@ -582,16 +789,26 @@ export default function Home() {
                           </p>
                           {d.exampleZh ? (
                             <p className="dc-ex-zh dc-zh">{d.exampleZh}</p>
-                          ) : translating ? (
-                            <p className="dc-ex-zh dc-zh"><span className="dc-pending">翻譯中…</span></p>
+                          ) : (translating || (expandingMeaning === mi && di >= INITIAL_DEFS_PER_MEANING)) && !d.exampleZh ? (
+                            <p className="dc-ex-zh"><SkelLine className="dc-skel-ex-zh-inline" /></p>
                           ) : null}
                         </div>
                       )}
                     </li>
                   ))}
                 </ol>
+                {hiddenCount > 0 && !isExpanded && (
+                  <button
+                    type="button"
+                    className="dc-show-more"
+                    onClick={() => void showMoreSenses(mi)}
+                  >
+                    Show {hiddenCount} more sense{hiddenCount === 1 ? "" : "s"}
+                  </button>
+                )}
               </section>
-            ))}
+            );
+            })}
           </div>
         </article>
       )}

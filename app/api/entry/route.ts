@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchEnglishEntry, WordNotFoundError } from "@/lib/dictionary";
 import { lookupCefrLevel } from "@/lib/cefr";
 import { findRelatedWords } from "@/lib/cedict";
+import { isPhraseQuery } from "@/lib/phrases";
 import { cacheGet, cacheSet } from "@/lib/cache";
 import type { DictEntry } from "@/lib/types";
 
@@ -21,8 +22,9 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json({
       ...entry,
-      cefr: lookupCefrLevel(entry.word),
-      relatedWords: findRelatedWords(entry.word),
+      cefr: isPhraseQuery(entry.word) ? null : lookupCefrLevel(entry.word),
+      isPhrase: isPhraseQuery(entry.word),
+      relatedWords: isPhraseQuery(entry.word) ? [] : findRelatedWords(entry.word),
     });
   } catch (err) {
     if (err instanceof WordNotFoundError)
