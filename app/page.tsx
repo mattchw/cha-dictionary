@@ -18,6 +18,7 @@ import { getWordOfDayClient } from "@/lib/word-of-day-client";
 import { spellSuggestClient } from "@/lib/spell-suggest-client";
 import { formatEntryAsText } from "@/lib/format-entry";
 import { INITIAL_DEFS_PER_MEANING } from "@/lib/dictionary-constants";
+import { applyStreamEvent, streamTranslate } from "@/lib/stream-translate-client";
 
 const CHIP_COUNT = 4;
 const PHRASAL_CHIP_COUNT = 4;
@@ -213,35 +214,34 @@ export default function Home() {
 
     setExpandingMeaning(meaningIndex);
     try {
-      const res = await fetch("/api/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entry,
-          meaningIndex,
-          fromDefIndex: INITIAL_DEFS_PER_MEANING,
-        }),
+      await streamTranslate({
+        entry,
+        meaningIndex,
+        fromDefIndex: INITIAL_DEFS_PER_MEANING,
+        onEvent: (event) => {
+          if (event.type === "done") {
+            setEntry((prev) => {
+              if (!prev) return event.entry;
+              const meanings = prev.meanings.map((m, i) => {
+                if (i !== meaningIndex) return m;
+                return {
+                  ...m,
+                  definitions: m.definitions.map((d, di) =>
+                    di < INITIAL_DEFS_PER_MEANING
+                      ? d
+                      : event.entry.meanings[i].definitions[di] ?? d
+                  ),
+                };
+              });
+              const updated = { ...prev, meanings };
+              void saveCachedEntry(updated);
+              return updated;
+            });
+          } else if (event.type !== "wordZh") {
+            setEntry((prev) => (prev ? applyStreamEvent(prev, event) : prev));
+          }
+        },
       });
-      if (res.ok) {
-        const merged: DictEntry = await res.json();
-        setEntry((prev) => {
-          if (!prev) return merged;
-          const meanings = prev.meanings.map((m, i) => {
-            if (i !== meaningIndex) return m;
-            return {
-              ...m,
-              definitions: m.definitions.map((d, di) =>
-                di < INITIAL_DEFS_PER_MEANING
-                  ? d
-                  : merged.meanings[i].definitions[di] ?? d
-              ),
-            };
-          });
-          const updated = { ...prev, meanings };
-          void saveCachedEntry(updated);
-          return updated;
-        });
-      }
     } catch {
       // Extra senses stay English-only
     } finally {
@@ -331,28 +331,28 @@ export default function Home() {
 
   async function loadTranslation(eng: DictEntry, id: number) {
     setTranslating(true);
-    try {
-      const tRes = await fetch("/api/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entry: eng }),
-      });
-      if (reqRef.current !== id) return;
-      if (tRes.ok) {
-        const merged: DictEntry = await tRes.json();
-        if (reqRef.current === id) {
-          setEntry(merged);
+    setZhFailed(false);
+
+    const ok = await streamTranslate({
+      entry: eng,
+      defsPerMeaning: INITIAL_DEFS_PER_MEANING,
+      isCancelled: () => reqRef.current !== id,
+      onEvent: (event) => {
+        if (reqRef.current !== id) return;
+        if (event.type === "done") {
+          setEntry(event.entry);
           setFromCache(false);
-          await saveCachedEntry(merged);
+          void saveCachedEntry(event.entry);
           void refreshRecent();
+        } else {
+          setEntry((prev) => (prev ? applyStreamEvent(prev, event) : prev));
         }
-      } else {
-        setZhFailed(true);
-      }
-    } catch {
-      if (reqRef.current === id) setZhFailed(true);
-    } finally {
-      if (reqRef.current === id) setTranslating(false);
+      },
+    });
+
+    if (reqRef.current === id) {
+      if (!ok) setZhFailed(true);
+      setTranslating(false);
     }
   }
 
