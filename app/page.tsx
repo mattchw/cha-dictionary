@@ -16,7 +16,6 @@ import {
 import { offlineSuggest } from "@/lib/offline-suggest";
 import { getWordOfDayClient } from "@/lib/word-of-day-client";
 import { spellSuggestClient } from "@/lib/spell-suggest-client";
-import { formatEntryAsText } from "@/lib/format-entry";
 import { INITIAL_DEFS_PER_MEANING } from "@/lib/dictionary-constants";
 import { applyStreamEvent, streamTranslate } from "@/lib/stream-translate-client";
 
@@ -51,7 +50,6 @@ export default function Home() {
   const [isOnline, setIsOnline] = useState(true);
   const [fromCache, setFromCache] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [entryCopied, setEntryCopied] = useState(false);
   const [spellSuggestions, setSpellSuggestions] = useState<string[]>([]);
   const [expandedMeanings, setExpandedMeanings] = useState<Set<number>>(new Set());
   const [expandingMeaning, setExpandingMeaning] = useState<number | null>(null);
@@ -246,17 +244,6 @@ export default function Home() {
       // Extra senses stay English-only
     } finally {
       setExpandingMeaning(null);
-    }
-  }
-
-  async function copyEntry() {
-    if (!entry) return;
-    try {
-      await navigator.clipboard.writeText(formatEntryAsText(entry));
-      setEntryCopied(true);
-      window.setTimeout(() => setEntryCopied(false), 1500);
-    } catch {
-      // clipboard unavailable
     }
   }
 
@@ -704,14 +691,6 @@ export default function Home() {
                 title="Copy word"
               >
                 <Copy size={18} strokeWidth={2.25} />
-              </button>
-              <button
-                type="button"
-                className={`dc-copy-entry${entryCopied ? " is-done" : ""}`}
-                onClick={() => void copyEntry()}
-                title="Copy full entry"
-              >
-                {entryCopied ? "Copied" : "Copy entry"}
               </button>
               <button className="dc-audio" onClick={playAudio} aria-label="Play pronunciation">
                 <Volume2 size={20} strokeWidth={2.25} />
