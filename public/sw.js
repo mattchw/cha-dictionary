@@ -1,8 +1,11 @@
-const CACHE = "cha-dict-v1";
+const CACHE = "cha-dict-v2";
 const PRECACHE = [
   "/",
   "/manifest.webmanifest",
   "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/apple-touch-icon.png",
   "/data/frequency.txt",
   "/data/cefr-levels.json",
   "/data/c1c2-words.json",
