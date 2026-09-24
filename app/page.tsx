@@ -170,7 +170,6 @@ export default function Home() {
     setSuggestOpen(false);
     setActiveIndex(-1);
     setCopied(false);
-    setEntryCopied(false);
     setExpandedMeanings(new Set());
     setExpandingMeaning(null);
     inputRef.current?.focus();
